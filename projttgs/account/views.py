@@ -50,4 +50,15 @@ def register(request):
     return render(request,
                   'account/register.html',
                   {'user_form': user_form})
+from django.contrib.auth.decorators import login_required
+from django.shortcuts import render
+
+@login_required
+def generate_timetable(request):
+    # Placeholder for timetable logic
+    return render(request, 'gentimetable.html', {
+        'sections': [],
+        'schedule': []
+    })
+
 

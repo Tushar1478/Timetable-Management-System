@@ -1,22 +1,3 @@
-# -*- coding: utf-8 -*-
-import io
-
-from xhtml2pdf.context import pisaContext
-from xhtml2pdf.default import DEFAULT_CSS
-from xhtml2pdf.parser import pisaParser
-from reportlab.platypus.flowables import Spacer
-from reportlab.platypus.frames import Frame
-from xhtml2pdf.xhtml2pdf_reportlab import PmlBaseDoc, PmlPageTemplate
-from xhtml2pdf.util import pisaTempFile, getBox, PyPDF2
-import cgi
-import logging
-import six
-
-if not six.PY2:
-    from html import escape as html_escape
-else:
-    from cgi import escape as html_escape
-
 # Copyright 2010 Dirk Holtwick, holtwick.it
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,29 +12,56 @@ else:
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-log = logging.getLogger("xhtml2pdf")
+import io
+import logging
+from html import escape as html_escape
+
+from reportlab.lib import pdfencrypt
+from reportlab.platypus.flowables import Spacer
+from reportlab.platypus.frames import Frame
+
+from xhtml2pdf.builders.signs import PDFSignature
+from xhtml2pdf.builders.watermarks import WaterMarks
+from xhtml2pdf.context import pisaContext
+from xhtml2pdf.default import DEFAULT_CSS
+from xhtml2pdf.files import cleanFiles, pisaTempFile
+from xhtml2pdf.parser import pisaParser
+from xhtml2pdf.util import getBox
+from xhtml2pdf.xhtml2pdf_reportlab import PmlBaseDoc, PmlPageTemplate
+
+log = logging.getLogger(__name__)
 
 
 def pisaErrorDocument(dest, c):
     out = pisaTempFile(capacity=c.capacity)
-    out.write("<p style='background-color:red;'><strong>%d error(s) occured:</strong><p>" % c.err)
+    out.write(
+        "<p style='background-color:red;'><strong>%d error(s) occurred:</strong><p>"
+        % c.err
+    )
     for mode, line, msg, _ in c.log:
         if mode == "error":
-            out.write("<pre>%s in line %d: %s</pre>" %
-                      (mode, line, html_escape(msg)))
+            out.write("<pre>%s in line %d: %s</pre>" % (mode, line, html_escape(msg)))
 
-    out.write("<p><strong>%d warning(s) occured:</strong><p>" % c.warn)
+    out.write("<p><strong>%d warning(s) occurred:</strong><p>" % c.warn)
     for mode, line, msg, _ in c.log:
         if mode == "warning":
-            out.write("<p>%s in line %d: %s</p>" %
-                      (mode, line, html_escape(msg)))
+            out.write("<p>%s in line %d: %s</p>" % (mode, line, html_escape(msg)))
 
     return pisaDocument(out.getvalue(), dest, raise_exception=False)
 
 
-def pisaStory(src, path=None, link_callback=None, debug=0, default_css=None,
-              xhtml=False, encoding=None, context=None, xml_output=None,
-              **kw):
+def pisaStory(
+    src,
+    path="",
+    link_callback=None,
+    debug=0,
+    default_css=None,
+    xhtml=False,  # noqa: FBT002
+    encoding=None,
+    context=None,
+    xml_output=None,
+    **_kwargs,
+):
     # Prepare Context
     if not context:
         context = pisaContext(path, debug=debug)
@@ -80,17 +88,44 @@ def pisaStory(src, path=None, link_callback=None, debug=0, default_css=None,
     return context
 
 
-def pisaDocument(src, dest=None, path=None, link_callback=None, debug=0,
-                 default_css=None, xhtml=False, encoding=None, xml_output=None,
-                 raise_exception=True, capacity=100 * 1024, context_meta=None,
-                 **kw):
-    log.debug("pisaDocument options:\n  src = %r\n  dest = %r\n  path = %r\n  link_callback = %r\n  xhtml = %r\n  context_meta = %r",
-              src,
-              dest,
-              path,
-              link_callback,
-              xhtml,
-              context_meta)
+def get_encrypt_instance(data):
+    if data is None:
+        return None
+
+    if isinstance(data, str):
+        return pdfencrypt.StandardEncryption(data)
+
+    return data
+
+
+def pisaDocument(
+    src,
+    dest=None,
+    dest_bytes=False,  # noqa: FBT002
+    path="",
+    link_callback=None,
+    debug=0,
+    default_css=None,
+    xhtml=False,  # noqa: FBT002
+    encoding=None,
+    xml_output=None,
+    raise_exception=True,  # noqa: FBT002, ARG001
+    capacity=100 * 1024,
+    context_meta=None,
+    encrypt=None,
+    signature=None,
+    **_kwargs,
+):
+    log.debug(
+        "pisaDocument options:\n  src = %r\n  dest = %r\n  path = %r\n  link_callback ="
+        " %r\n  xhtml = %r\n  context_meta = %r",
+        src,
+        dest,
+        path,
+        link_callback,
+        xhtml,
+        context_meta,
+    )
 
     # Prepare simple context
     context = pisaContext(path, debug=debug, capacity=capacity)
@@ -101,8 +136,17 @@ def pisaDocument(src, dest=None, path=None, link_callback=None, debug=0,
     context.pathCallback = link_callback
 
     # Build story
-    context = pisaStory(src, path, link_callback, debug, default_css, xhtml,
-                        encoding, context=context, xml_output=xml_output)
+    context = pisaStory(
+        src,
+        path,
+        link_callback,
+        debug,
+        default_css,
+        xhtml,
+        encoding,
+        context=context,
+        xml_output=xml_output,
+    )
 
     # Buffer PDF into memory
     out = io.BytesIO()
@@ -112,11 +156,12 @@ def pisaDocument(src, dest=None, path=None, link_callback=None, debug=0,
         pagesize=context.pageSize,
         author=context.meta["author"].strip(),
         subject=context.meta["subject"].strip(),
-        keywords=[x.strip() for x in
-                  context.meta["keywords"].strip().split(",") if x],
+        keywords=[x.strip() for x in context.meta["keywords"].strip().split(",") if x],
         title=context.meta["title"].strip(),
         showBoundary=0,
-        allowSplitting=1)
+        encrypt=get_encrypt_instance(encrypt),
+        allowSplitting=1,
+    )
 
     # Prepare templates and their frames
     if "body" in context.templateList:
@@ -127,15 +172,22 @@ def pisaDocument(src, dest=None, path=None, link_callback=None, debug=0,
         body = PmlPageTemplate(
             id="body",
             frames=[
-                Frame(x, y, w, h,
-                      id="body",
-                      leftPadding=0,
-                      rightPadding=0,
-                      bottomPadding=0,
-                      topPadding=0)],
-            pagesize=context.pageSize)
+                Frame(
+                    x,
+                    y,
+                    w,
+                    h,
+                    id="body",
+                    leftPadding=0,
+                    rightPadding=0,
+                    bottomPadding=0,
+                    topPadding=0,
+                )
+            ],
+            pagesize=context.pageSize,
+        )
 
-    doc.addPageTemplates([body] + list(context.templateList.values()))
+    doc.addPageTemplates([body, *list(context.templateList.values())])
 
     # Use multibuild e.g. if a TOC has to be created
     if context.multiBuild:
@@ -144,39 +196,19 @@ def pisaDocument(src, dest=None, path=None, link_callback=None, debug=0,
         doc.build(context.story)
 
     # Add watermarks
-    if PyPDF2:
-        for bgouter in context.pisaBackgroundList:
-            # If we have at least one background, then lets do it
-            if bgouter:
-                istream = out
+    output = io.BytesIO()
+    output, has_bg = WaterMarks.process_doc(context, out, output)
 
-                output = PyPDF2.PdfFileWriter()
-                input1 = PyPDF2.PdfFileReader(istream)
-                ctr = 0
-                # TODO: Why do we loop over the same list again?
-                # see bgouter at line 137
-                for bg in context.pisaBackgroundList:
-                    page = input1.getPage(ctr)
-                    if (
-                            bg and not bg.notFound() and
-                            (bg.mimetype == "application/pdf")
-                    ):
-                        bginput = PyPDF2.PdfFileReader(bg.getFile())
-                        pagebg = bginput.getPage(0)
-                        pagebg.mergePage(page)
-                        page = pagebg
-                    else:
-                        log.warn(context.warning(
-                            "Background PDF %s doesn't exist.", bg))
-                    output.addPage(page)
-                    ctr += 1
-                out = pisaTempFile(capacity=context.capacity)
-                output.write(out)
-                # data = sout.getvalue()
-                # Found a background? So leave loop after first occurence
-                break
-    else:
-        log.warn(context.warning("PyPDF2 not installed!"))
+    if not has_bg:
+        output = out
+    if signature:
+        signoutput = io.BytesIO()
+        do_ok = PDFSignature.sign(output, signoutput, signature)
+        if do_ok:
+            output = signoutput
+
+    # Get the resulting PDF and write it to the file object
+    # passed from the caller
 
     # Get the resulting PDF and write it to the file object
     # passed from the caller
@@ -186,8 +218,11 @@ def pisaDocument(src, dest=None, path=None, link_callback=None, debug=0,
         dest = io.BytesIO()
     context.dest = dest
 
-    data = out.getvalue()
-
+    data = output.getvalue()
     context.dest.write(data)  # TODO: context.dest is a tempfile as well...
+    cleanFiles()
+
+    if dest_bytes:
+        return data
 
     return context

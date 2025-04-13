@@ -445,5 +445,32 @@ class Pdf(View):
             'request': request
         }
         return Render.render('gentimetable.html', params)
+from django.http import HttpResponse
+from django.template.loader import get_template
+from xhtml2pdf import pisa
 
+def generate_timetable_pdf(request):
+    template_path = 'ttgen/gentimetable.html'  # Or your HTML template
+    context = {
+        'department': 'CSE',
+        'section': 'A',
+        'timetable': {
+            'Monday':    ['Math', 'Physics', 'Break', 'CS', 'English'],
+            'Tuesday':   ['Biology', 'Chemistry', 'Break', 'CS Lab', 'Free'],
+            'Wednesday': ['Math', 'Break', 'Physics', 'English', 'CS'],
+            'Thursday':  ['Free', 'Break', 'Math', 'English', 'Lab'],
+            'Friday':    ['Math', 'Break', 'CS', 'Physics', 'Sports'],
+        }
+    }
+
+    template = get_template(template_path)
+    html = template.render(context)
+
+    response = HttpResponse(content_type='application/pdf')
+    response['Content-Disposition'] = 'attachment; filename="timetable.pdf"'
+
+    pisa_status = pisa.CreatePDF(html, dest=response)
+    if pisa_status.err:
+        return HttpResponse('Error generating PDF', status=500)
+    return response
 
